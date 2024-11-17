@@ -30,7 +30,7 @@ brew install python
 ## Step 3: Set Up the Project 🛠️
 
 1. Create a new folder on your desktop called "memescanner"
-2. Save the Python script I sent you in this folder as `scanner.py`
+2. Save the Python script I sent you in this folder as `main.py`
 3. Open Terminal again
 4. Type these commands one by one:
 ```
@@ -40,7 +40,7 @@ python -m pip install requests tabulate termcolor
 
 ## Step 4: Add Your API Key 🔐
 
-1. Open the `scanner.py` file (you can use TextEdit)
+1. Open the `main.py` file (you can use TextEdit)
 2. Find this line near the top: `api_key = "INSERT_YOUR_API"`
 3. Replace `INSERT_YOUR_API` with your CoinMarketCap API key
 4. Save the file
@@ -49,7 +49,7 @@ python -m pip install requests tabulate termcolor
 
 1. In Terminal (make sure you're still in the memescanner folder), type:
 ```
-python scanner.py
+python main.py
 ```
 
 The scanner will start running and show you trending Solana memecoins! 
