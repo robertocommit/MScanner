@@ -201,11 +201,6 @@ class MemeScanner:
             print(f"{'Volume:':<30} {colored(volume_str, 'blue')}")
             print(f"{'Market Cap:':<30} {colored(mcap_str, 'blue')}")
             
-            # Description section
-            if coin['description'] != 'N/A':
-                print("\n" + colored("📝 DESCRIPTION", 'yellow', attrs=['bold']).center(10))
-                print(colored(coin['description'], 'white'))
-            
             # Links section
             print("\n" + colored("🔗 LINKS", 'yellow', attrs=['bold']).center(10))
             print(f"{'Explorer:':<15} {colored(coin['explorer'], 'blue')}")
