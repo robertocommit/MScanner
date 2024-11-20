@@ -1,19 +1,79 @@
 import requests
+import time
+import json
+import os
 from tabulate import tabulate
 from datetime import datetime, timedelta, timezone
 from termcolor import colored
-import time
-import os
 
-api_key = "INSERT_YOUR_API"
-
-class MemeScanner:
+class DuneClient:
     def __init__(self, api_key):
         self.api_key = api_key
+        self.base_url = "https://api.dune.com/api/v1"
         self.headers = {
-            'X-CMC_PRO_API_KEY': api_key,
+            "X-Dune-API-Key": self.api_key,
+            "Content-Type": "application/json"
         }
-        print("✅ Scanner initialized with API key")
+
+    def execute_query(self, query_id, token_address):
+        url = f"{self.base_url}/query/{query_id}/execute"
+        parameters = {
+            "query_parameters": {
+                "token_address": token_address
+            }
+        }
+        try:
+            response = requests.post(url, headers=self.headers, json=parameters)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if hasattr(e.response, 'text'):
+                print(f"Response content: {e.response.text}")
+            raise
+
+    def get_execution_status(self, execution_id):
+        url = f"{self.base_url}/execution/{execution_id}/status"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def get_execution_result(self, execution_id):
+        url = f"{self.base_url}/execution/{execution_id}/results"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def execute_query_and_wait(self, query_id, token_address, max_retries=50, sleep_time=5):
+        try:
+            execution = self.execute_query(query_id, token_address)
+            execution_id = execution['execution_id']
+
+            for _ in range(max_retries):
+                status = self.get_execution_status(execution_id)
+                state = status.get('state', 'UNKNOWN')
+                
+                if state == 'QUERY_STATE_COMPLETED':
+                    return self.get_execution_result(execution_id)
+                elif state == 'QUERY_STATE_FAILED':
+                    raise Exception("Query failed")
+                elif state == 'QUERY_STATE_CANCELLED':
+                    raise Exception("Query was cancelled")
+                
+                time.sleep(sleep_time)
+                
+            raise TimeoutError("Query execution timed out")
+            
+        except Exception as e:
+            raise
+
+class MemeScanner:
+    def __init__(self, cmc_api_key, dune_api_key):
+        self.cmc_api_key = cmc_api_key
+        self.dune_client = DuneClient(dune_api_key)
+        self.cmc_headers = {
+            'X-CMC_PRO_API_KEY': cmc_api_key,
+        }
+        print("✅ Scanner initialized with API keys")
     
     def get_token_metadata(self, coin_id, symbol):
         """Fetch detailed metadata for a token"""
@@ -22,12 +82,11 @@ class MemeScanner:
         params = {'id': coin_id}
         
         try:
-            response = requests.get(url, headers=self.headers, params=params)
+            response = requests.get(url, headers=self.cmc_headers, params=params)
             if str(coin_id) not in response.json().get('data', {}):
                 raise Exception("Token metadata not found")
             data = response.json()['data'][str(coin_id)]
             
-            # Check if token is on Solana
             platform = data.get('platform', {})
             is_solana = platform.get('name', '').lower() == 'solana'
             
@@ -48,13 +107,30 @@ class MemeScanner:
             print(f" ❌")
             return None
 
-    def scan_memecoins(self, volume_threshold=50000, min_price_increase=20, max_price_increase=300):
-        """Scan for trending memecoins with enhanced data"""
-        print(f"\n🔍 Scanning for Solana memecoins with:")
-        print(f"   - Minimum volume: ${volume_threshold:,}")
-        print(f"   - 24h growth range: {min_price_increase}% to {max_price_increase}%")
+    def analyze_with_dune(self, token_address):
+        """Get Dune analysis for a token"""
+        try:
+            QUERY_ID = "4304509"  # Your Dune query ID
+            results = self.dune_client.execute_query_and_wait(QUERY_ID, token_address)
+            
+            if 'result' in results and 'rows' in results['result'] and results['result']['rows']:
+                latest_row = results['result']['rows'][0]
+                return {
+                    'dune_score': latest_row.get('memecoin_score', 'N/A'),
+                    'dune_interpretation': latest_row.get('score_interpretation', 'N/A')
+                }
+        except Exception as e:
+            print(f"⚠️ Dune analysis failed for {token_address}: {str(e)}")
         
-        print("\n📊 Fetching latest market data from CMC...", end='', flush=True)
+        return {
+            'dune_score': 'N/A',
+            'dune_interpretation': 'N/A'
+        }
+
+    def scan_memecoins(self, volume_threshold=50000, min_price_increase=20, max_price_increase=300):
+        """Scan for trending memecoins and analyze with Dune"""
+        print(f"\n🔍 Scanning for Solana memecoins...")
+        
         url = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest'
         params = {
             'limit': 5000,
@@ -65,165 +141,101 @@ class MemeScanner:
         }
         
         try:
-            response = requests.get(url, headers=self.headers, params=params)
+            response = requests.get(url, headers=self.cmc_headers, params=params)
             data = response.json()['data']
-            print(" ✅")
-            print(f"📈 Processing {len(data)} tokens...")
         except Exception as e:
-            print(f" ❌\nError fetching data: {str(e)}")
+            print(f"❌ Error fetching CMC data: {str(e)}")
             return []
         
         trending_coins = []
-        matches_found = 0
         current_time = datetime.now(timezone.utc)
         
-        for index, coin in enumerate(data):
+        for coin in data:
             quote = coin['quote']['USD']
             price_change = quote['percent_change_24h']
-            volume_change = quote.get('volume_change_24h', 0)
-            
-            # Convert date_added to UTC for comparison
-            coin_date = datetime.fromisoformat(coin['date_added'].replace('Z', '+00:00'))
             
             if (quote['volume_24h'] > volume_threshold and
                 min_price_increase <= price_change <= max_price_increase and
-                coin_date > current_time - timedelta(days=30)):
+                datetime.fromisoformat(coin['date_added'].replace('Z', '+00:00')) > current_time - timedelta(days=30)):
                 
-                matches_found += 1
-                print(f"\n🎯 Found potential memecoin #{matches_found}: {coin['symbol']}")
-                print(f"   Price change: {price_change:.2f}%")
-                print(f"   Volume: ${quote['volume_24h']:,.2f}")
-                
-                # Get additional metadata and check if it's a Solana token
                 metadata = self.get_token_metadata(coin['id'], coin['symbol'])
-                if metadata:  # Only add if it's a Solana token
-                    time.sleep(0.2)  # Respect API rate limits
+                if metadata:
+                    # Get Dune analysis
+                    dune_results = self.analyze_with_dune(metadata['token_address'])
                     
-                    trending_coins.append({
+                    coin_data = {
                         'symbol': coin['symbol'],
                         'name': coin['name'],
                         'price_change_24h': price_change,
                         'volume_24h': quote['volume_24h'],
-                        'volume_change_24h': volume_change,
+                        'volume_change_24h': quote.get('volume_change_24h', 0),
                         'market_cap': quote.get('market_cap', 0),
                         'price': quote['price'],
                         'date_added': coin['date_added'],
-                        **metadata
-                    })
-            
-            # Progress indicator every 1000 tokens
-            if (index + 1) % 1000 == 0:
-                print(f"⏳ Processed {index + 1} tokens...")
+                        **metadata,
+                        **dune_results
+                    }
+                    
+                    trending_coins.append(coin_data)
+                    print(f"\n💫 Found: {coin['symbol']}")
+                    print(f"   Price Change: {price_change:.2f}%")
+                    print(f"   Dune Score: {dune_results['dune_score']}")
+                    print(f"   Signal: {dune_results['dune_interpretation']}")
+                
+                time.sleep(0.2)  # Rate limiting
         
-        print(f"\n✨ Scan complete! Found {len(trending_coins)} trending Solana memecoins")
         return trending_coins
 
     def format_results(self, coins):
-        """Format results in a clean table"""
+        """Format results with both CMC and Dune data"""
         if not coins:
-            print("\n❌ No trending Solana memecoins found matching criteria")
+            print("\n❌ No trending tokens found")
             return
             
-        print("\n📊 Formatting results...")
+        # Sort by Dune score and price change
+        coins.sort(key=lambda x: (
+            float(x['dune_score']) if isinstance(x['dune_score'], (int, float)) else -1,
+            x['price_change_24h']
+        ), reverse=True)
         
-        # Sort coins by price change first
-        coins.sort(key=lambda x: x['price_change_24h'], reverse=True)
-        
-        formatted_data = []
+        # Prepare table data
+        table_data = []
         for coin in coins:
-            # Format price and volume changes
-            price_change = coin['price_change_24h']
-            volume_change = coin['volume_change_24h']
+            price_change = f"{coin['price_change_24h']:+.2f}%"
+            volume = "${:,.2f}M".format(coin['volume_24h'] / 1e6)
+            dune_score = coin['dune_score']
             
-            price_str = f"+{price_change:.2f}%" if price_change > 0 else f"{price_change:.2f}%"
-            volume_str = f"+{volume_change:.2f}%" if volume_change > 0 else f"{volume_change:.2f}%"
-            
-            colored_price = colored(price_str, 'green' if price_change > 0 else 'red')
-            colored_volume = colored(volume_str, 'green' if volume_change > 0 else 'red')
-            
-            # Format numbers
-            def format_number(num):
-                if num >= 1e9:
-                    return f"${num/1e9:.2f}B"
-                elif num >= 1e6:
-                    return f"${num/1e6:.2f}M"
-                else:
-                    return f"${num/1e3:.2f}K"
-            
-            # Format date
-            date = datetime.fromisoformat(coin['date_added'].replace('Z', '+00:00'))
-            days_ago = (datetime.now(timezone.utc) - date).days
-            
-            volume_formatted = format_number(coin['volume_24h'])
-            mcap_formatted = format_number(coin.get('market_cap', 0))
-            
-            formatted_data.append([
+            row = [
                 coin['symbol'],
-                coin['name'][:20] + ('...' if len(coin['name']) > 20 else ''),
-                colored_price,
-                colored_volume,
-                volume_formatted,
-                mcap_formatted,
-                f"${coin['price']:.8f}",
-                f"{days_ago}d ago",
-                coin['token_address'][:8] + '...',
-                coin['twitter'].replace('https://twitter.com/', '@'),
-                coin['telegram']
-            ])
+                coin['name'][:15] + '...',
+                colored(price_change, 'green' if coin['price_change_24h'] > 0 else 'red'),
+                volume,
+                str(dune_score),
+                coin['dune_interpretation'],
+                coin['token_address'][:10] + '...'
+            ]
+            table_data.append(row)
         
-        # Print main table
-        headers = ['Symbol', 'Name', 'Price 24h', 'Vol 24h%', 'Volume', 'MCap', 'Price', 'Listed', 'Address', 'Twitter', 'Telegram']
-        print("\n" + "="*10)
-        print(colored("🚀 TRENDING SOLANA MEMECOINS 🚀", 'yellow', attrs=['bold']).center(10))
-        print("="*10 + "\n")
-        print(tabulate(formatted_data, headers=headers, tablefmt='simple'))
-        
-        # Print detailed info for top 5 with enhanced formatting
-        print("\n" + "="*10)
-        print(colored("🔥 TOP 5 TRENDING SOLANA MEMECOINS 🔥", 'yellow', attrs=['bold']).center(10))
-        print("="*10)
-        
-        for i, coin in enumerate(coins[:5]):
-            print("\n" + colored(f"{'='*4} #{i+1} {'='*4}", 'blue'))
-            name_header = f"{coin['symbol']} - {coin['name']}"
-            print(colored(name_header.center(10), 'cyan', attrs=['bold']))
-            
-            # Format metrics with colors and emojis
-            price_change_str = f"{coin['price_change_24h']:+.2f}%"
-            volume_change_str = f"{coin['volume_change_24h']:+.2f}%"
-            volume_str = "${:,.2f}".format(coin['volume_24h'])
-            mcap_str = "${:,.2f}".format(coin.get('market_cap', 0))
-            
-            # Print metrics in a centered, organized way
-            print("\n" + colored("📊 METRICS", 'yellow', attrs=['bold']).center(10))
-            print(f"{'Price Change (24h):':<30} {colored(price_change_str, 'green' if coin['price_change_24h'] > 0 else 'red')}")
-            print(f"{'Volume Change (24h):':<30} {colored(volume_change_str, 'green' if coin['volume_change_24h'] > 0 else 'red')}")
-            print(f"{'Volume:':<30} {colored(volume_str, 'blue')}")
-            print(f"{'Market Cap:':<30} {colored(mcap_str, 'blue')}")
-            
-            # Links section
-            print("\n" + colored("🔗 LINKS", 'yellow', attrs=['bold']).center(10))
-            print(f"{'Explorer:':<15} {colored(coin['explorer'], 'blue')}")
-            print(f"{'Token:':<15} {colored(coin['token_address'], 'blue')}")
-            if coin['twitter']:
-                print(f"{'Twitter:':<15} {colored(coin['twitter'], 'blue')}")
-            if coin['telegram']:
-                print(f"{'Telegram:':<15} {colored(coin['telegram'], 'blue')}")
-            
-            print(colored("="*10, 'blue'))
+        # Print results
+        headers = ['Symbol', 'Name', 'Price 24h', 'Volume', 'Dune Score', 'Signal', 'Address']
+        print("\n" + "="*50)
+        print(colored("🚀 TRENDING SOLANA MEMECOINS WITH DUNE ANALYSIS 🚀", 'yellow', attrs=['bold']))
+        print("="*50 + "\n")
+        print(tabulate(table_data, headers=headers, tablefmt='simple'))
 
 def main():
-    print("🚀 Starting Solana Memecoin Scanner...")
+    print("🚀 Starting Combined Memecoin Scanner...")
     
-    # Check for API key
-    # cmc_api_key = os.getenv('CMC_TOKEN')
-    cmc_api_key = api_key
-    if not cmc_api_key:
-        print("❌ Error: Please set your CMC_TOKEN environment variable")
-        exit(1)
+    # Check for API keys
+    cmc_api_key = os.getenv('CMC_TOKEN')
+    dune_api_key = os.getenv('DUNE_TOKEN')
+    
+    if not cmc_api_key or not dune_api_key:
+        print("❌ Error: Please set both CMC_TOKEN and DUNE_TOKEN environment variables")
+        return
     
     try:
-        scanner = MemeScanner(cmc_api_key)
+        scanner = MemeScanner(cmc_api_key, dune_api_key)
         trending = scanner.scan_memecoins(
             volume_threshold=50000,
             min_price_increase=20,
@@ -232,8 +244,7 @@ def main():
         scanner.format_results(trending)
         print("\n✨ Scan completed successfully!")
     except Exception as e:
-        print(f"\n❌ Error during execution: {str(e)}")
-        raise
+        print(f"\n❌ Error: {str(e)}")
 
 if __name__ == '__main__':
     main()
