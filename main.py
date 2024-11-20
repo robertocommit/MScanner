@@ -180,6 +180,7 @@ class MemeScanner:
                     print(f"\n💫 Found: {coin['symbol']}")
                     print(f"   Price Change: {price_change:.2f}%")
                     print(f"   Volume Change: {coin_data['volume_change_24h']:.2f}%")
+                    print(f"   Market Cap: ${coin_data['market_cap']:,.2f}")  # Added market cap display
                     print(f"   Dune Score: {dune_results['dune_score']}")
                     print(f"   Signal: {dune_results['dune_interpretation']}")
                 
@@ -209,6 +210,9 @@ class MemeScanner:
             volume = "${:,.2f}M".format(coin['volume_24h'] / 1e6)
             volume_change = f"{coin['volume_change_24h']:+.2f}%" if coin['volume_change_24h'] else "N/A"
             
+            # Format market cap
+            market_cap = "${:,.2f}M".format(coin['market_cap'] / 1e6)
+            
             # Format Dune score
             dune_score = coin['dune_score']
             
@@ -218,14 +222,15 @@ class MemeScanner:
                 colored(price_change, 'green' if coin['price_change_24h'] > 0 else 'red'),
                 volume,
                 colored(volume_change, 'green' if coin.get('volume_change_24h', 0) > 0 else 'red'),
+                market_cap,  # Added market cap column
                 str(dune_score),
                 coin['dune_interpretation'],
-                coin['token_address']  # Full address
+                coin['token_address']
             ]
             table_data.append(row)
         
         # Print results
-        headers = ['Symbol', 'Name', 'Price 24h', 'Volume', 'Vol Change', 'Dune Score', 'Signal', 'Token Address']
+        headers = ['Symbol', 'Name', 'Price 24h', 'Volume', 'Vol Change', 'Market Cap', 'Dune Score', 'Signal', 'Token Address']  # Added Market Cap header
         print("\n" + "="*80)
         print(colored("🚀 TRENDING SOLANA MEMECOINS WITH DUNE ANALYSIS 🚀", 'yellow', attrs=['bold']))
         print("="*80 + "\n")
@@ -249,6 +254,7 @@ class MemeScanner:
             print(f"Price Change: {colored(price_change_str, price_change_color)}")
             print(f"Volume: ${coin['volume_24h']:,.2f}")
             print(f"Volume Change: {colored(volume_change_str, volume_change_color)}")
+            print(f"Market Cap: ${coin['market_cap']:,.2f}")  # Added market cap display
             print(f"Dune Score: {colored(str(coin['dune_score']), 'cyan')}")
             print(f"Signal: {colored(coin['dune_interpretation'], 'yellow')}")
             print(f"\nToken Address: {colored(coin['token_address'], 'blue')}")
