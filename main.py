@@ -179,6 +179,7 @@ class MemeScanner:
                     trending_coins.append(coin_data)
                     print(f"\n💫 Found: {coin['symbol']}")
                     print(f"   Price Change: {price_change:.2f}%")
+                    print(f"   Volume Change: {coin_data['volume_change_24h']:.2f}%")
                     print(f"   Dune Score: {dune_results['dune_score']}")
                     print(f"   Signal: {dune_results['dune_interpretation']}")
                 
@@ -187,7 +188,7 @@ class MemeScanner:
         return trending_coins
 
     def format_results(self, coins):
-        """Format results with both CMC and Dune data"""
+        """Format results with both CMC and Dune data, including full address and volume change"""
         if not coins:
             print("\n❌ No trending tokens found")
             return
@@ -201,8 +202,14 @@ class MemeScanner:
         # Prepare table data
         table_data = []
         for coin in coins:
+            # Format price change
             price_change = f"{coin['price_change_24h']:+.2f}%"
+            
+            # Format volume and volume change
             volume = "${:,.2f}M".format(coin['volume_24h'] / 1e6)
+            volume_change = f"{coin['volume_change_24h']:+.2f}%" if coin['volume_change_24h'] else "N/A"
+            
+            # Format Dune score
             dune_score = coin['dune_score']
             
             row = [
@@ -210,18 +217,48 @@ class MemeScanner:
                 coin['name'][:15] + '...',
                 colored(price_change, 'green' if coin['price_change_24h'] > 0 else 'red'),
                 volume,
+                colored(volume_change, 'green' if coin.get('volume_change_24h', 0) > 0 else 'red'),
                 str(dune_score),
                 coin['dune_interpretation'],
-                coin['token_address'][:10] + '...'
+                coin['token_address']  # Full address
             ]
             table_data.append(row)
         
         # Print results
-        headers = ['Symbol', 'Name', 'Price 24h', 'Volume', 'Dune Score', 'Signal', 'Address']
-        print("\n" + "="*50)
+        headers = ['Symbol', 'Name', 'Price 24h', 'Volume', 'Vol Change', 'Dune Score', 'Signal', 'Token Address']
+        print("\n" + "="*80)
         print(colored("🚀 TRENDING SOLANA MEMECOINS WITH DUNE ANALYSIS 🚀", 'yellow', attrs=['bold']))
-        print("="*50 + "\n")
+        print("="*80 + "\n")
         print(tabulate(table_data, headers=headers, tablefmt='simple'))
+        
+        # Print detailed info for top 5
+        print("\n" + "="*40)
+        print(colored("🔥 TOP 5 DETAILED VIEW 🔥", 'yellow', attrs=['bold']))
+        print("="*40)
+        
+        for i, coin in enumerate(coins[:5], 1):
+            price_change_color = 'green' if coin['price_change_24h'] > 0 else 'red'
+            volume_change_color = 'green' if coin.get('volume_change_24h', 0) > 0 else 'red'
+            
+            print(f"\n{colored(f'#{i}', 'cyan', attrs=['bold'])} {colored(coin['symbol'], 'yellow', attrs=['bold'])} - {coin['name']}")
+            print("="*50)
+            
+            price_change_str = f"{coin['price_change_24h']:+.2f}%"
+            volume_change_str = f"{coin['volume_change_24h']:+.2f}%"
+            
+            print(f"Price Change: {colored(price_change_str, price_change_color)}")
+            print(f"Volume: ${coin['volume_24h']:,.2f}")
+            print(f"Volume Change: {colored(volume_change_str, volume_change_color)}")
+            print(f"Dune Score: {colored(str(coin['dune_score']), 'cyan')}")
+            print(f"Signal: {colored(coin['dune_interpretation'], 'yellow')}")
+            print(f"\nToken Address: {colored(coin['token_address'], 'blue')}")
+            
+            if coin['twitter']:
+                print(f"Twitter: {coin['twitter']}")
+            if coin['telegram']:
+                print(f"Telegram: {coin['telegram']}")
+            print(f"Explorer: {coin['explorer']}")
+            print("="*50)
 
 def main():
     print("🚀 Starting Combined Memecoin Scanner...")
